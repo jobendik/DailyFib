@@ -67,13 +67,13 @@ input bool   FastTestMode = false;             // Fast performance in tester (le
 
 // Position Management Settings
 input group "Position Management Settings"
-input bool   PM_EnableBreakEven   = false;    // Enable break even stop loss
+input bool   PM_EnableBreakEven   = true;    // Enable break even stop loss
 input double PM_BreakEvenPips     = 15.0;     // Pips in profit before break even
 input double PM_BreakEvenOffset   = 2.0;      // Break even offset in pips (+ entry)
-input bool   PM_EnableTrailing    = false;    // Enable trailing stop loss
+input bool   PM_EnableTrailing    = true;    // Enable trailing stop loss
 input double PM_TrailingStartPips = 20.0;     // Pips in profit before trailing starts
 input double PM_TrailingDistPips  = 15.0;     // Trailing stop distance in pips
-input bool   PM_EnablePartialClose = false;   // Enable partial position close
+input bool   PM_EnablePartialClose = true;   // Enable partial position close
 input double PM_PartialClosePercent = 50.0;   // Percentage of position to close
 input double PM_PartialClosePips  = 30.0;     // Pips in profit to trigger partial close
 
@@ -96,7 +96,7 @@ input double TZ_PendingOrderPips   = 2.0;    // Pending order placement distance
 
 // Dynamic Zone Sizing Settings
 input group "Dynamic Zone Sizing"
-input bool   UseDynamicZoneSizing  = false;    // Use ATR for dynamic zone sizing
+input bool   UseDynamicZoneSizing  = true;    // Use ATR for dynamic zone sizing
 input int    DynamicATR_Period     = 14;      // ATR period for calculations
 input double DynamicATR_MinMultiplier = 1.5;  // Multiplier for minimum zone size
 input double DynamicATR_MaxMultiplier = 7.0;  // Multiplier for maximum zone size
@@ -269,6 +269,164 @@ void LogDebug(string message)
 }
 
 //+------------------------------------------------------------------+
+//| Instrument type enumeration for auto-optimization                 |
+//+------------------------------------------------------------------+
+enum ENUM_INSTRUMENT_TYPE
+{
+   INSTRUMENT_FOREX,
+   INSTRUMENT_GOLD,
+   INSTRUMENT_SILVER,
+   INSTRUMENT_INDEX,
+   INSTRUMENT_CRYPTO,
+   INSTRUMENT_OTHER
+};
+
+// Global adjusted parameters (set in OnInit based on instrument)
+double g_adjustedMinStopLossPips;
+double g_adjustedMaxSpreadPips;
+double g_adjustedMinZoneSizePips;
+double g_adjustedMaxZoneSizePips;
+double g_adjustedBreakEvenPips;
+double g_adjustedTrailingStartPips;
+double g_adjustedTrailingDistPips;
+double g_adjustedPartialClosePips;
+double g_adjustedTolerance;
+double g_adjustedMATolerance;
+
+//+------------------------------------------------------------------+
+//| Detect instrument type from symbol name                           |
+//+------------------------------------------------------------------+
+ENUM_INSTRUMENT_TYPE DetectInstrumentType()
+{
+   string symbol = _Symbol;
+   StringToUpper(symbol);
+   
+   // Gold detection
+   if(StringFind(symbol, "XAU") >= 0 || StringFind(symbol, "GOLD") >= 0)
+      return INSTRUMENT_GOLD;
+   
+   // Silver detection
+   if(StringFind(symbol, "XAG") >= 0 || StringFind(symbol, "SILVER") >= 0)
+      return INSTRUMENT_SILVER;
+   
+   // Index detection
+   if(StringFind(symbol, "US30") >= 0 || StringFind(symbol, "DJ30") >= 0 || StringFind(symbol, "DOW") >= 0 ||
+      StringFind(symbol, "US500") >= 0 || StringFind(symbol, "SPX") >= 0 || StringFind(symbol, "SP500") >= 0 ||
+      StringFind(symbol, "NAS") >= 0 || StringFind(symbol, "NDX") >= 0 || StringFind(symbol, "USTEC") >= 0 ||
+      StringFind(symbol, "GER40") >= 0 || StringFind(symbol, "GER30") >= 0 || StringFind(symbol, "DAX") >= 0 ||
+      StringFind(symbol, "UK100") >= 0 || StringFind(symbol, "FTSE") >= 0 ||
+      StringFind(symbol, "JP225") >= 0 || StringFind(symbol, "JPN") >= 0 || StringFind(symbol, "NIKKEI") >= 0 ||
+      StringFind(symbol, "FRA40") >= 0 || StringFind(symbol, "CAC") >= 0 ||
+      StringFind(symbol, "AUS200") >= 0 || StringFind(symbol, "ASX") >= 0 ||
+      StringFind(symbol, "HK50") >= 0 || StringFind(symbol, "HSI") >= 0 ||
+      StringFind(symbol, "CHINA") >= 0 || StringFind(symbol, "CN50") >= 0)
+      return INSTRUMENT_INDEX;
+   
+   // Crypto detection
+   if(StringFind(symbol, "BTC") >= 0 || StringFind(symbol, "ETH") >= 0 || 
+      StringFind(symbol, "LTC") >= 0 || StringFind(symbol, "XRP") >= 0 ||
+      StringFind(symbol, "CRYPTO") >= 0)
+      return INSTRUMENT_CRYPTO;
+   
+   // Forex detection (check for standard currency pairs)
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   if(digits == 5 || digits == 3)  // Standard forex decimals
+      return INSTRUMENT_FOREX;
+   
+   return INSTRUMENT_OTHER;
+}
+
+//+------------------------------------------------------------------+
+//| Get instrument type name for logging                              |
+//+------------------------------------------------------------------+
+string GetInstrumentTypeName(ENUM_INSTRUMENT_TYPE type)
+{
+   switch(type)
+   {
+      case INSTRUMENT_FOREX:  return "Forex";
+      case INSTRUMENT_GOLD:   return "Gold";
+      case INSTRUMENT_SILVER: return "Silver";
+      case INSTRUMENT_INDEX:  return "Index";
+      case INSTRUMENT_CRYPTO: return "Crypto";
+      default:                return "Other";
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Auto-adjust parameters based on instrument type                   |
+//+------------------------------------------------------------------+
+void AutoAdjustParameters()
+{
+   ENUM_INSTRUMENT_TYPE instrumentType = DetectInstrumentType();
+   
+   // Start with user-defined values
+   g_adjustedMinStopLossPips = MinStopLossPips;
+   g_adjustedMaxSpreadPips = MaxSpreadPips;
+   g_adjustedMinZoneSizePips = TZ_MinZoneSizePips;
+   g_adjustedMaxZoneSizePips = TZ_MaxZoneSizePips;
+   g_adjustedBreakEvenPips = PM_BreakEvenPips;
+   g_adjustedTrailingStartPips = PM_TrailingStartPips;
+   g_adjustedTrailingDistPips = PM_TrailingDistPips;
+   g_adjustedPartialClosePips = PM_PartialClosePips;
+   g_adjustedTolerance = TZ_TolerancePips;
+   g_adjustedMATolerance = TZ_MATolerancePips;
+   
+   double multiplier = 1.0;
+   
+   switch(instrumentType)
+   {
+      case INSTRUMENT_GOLD:
+         multiplier = 3.0;  // Gold moves ~3x more than forex in pips
+         g_adjustedMaxSpreadPips = MathMax(MaxSpreadPips, 40.0);
+         break;
+         
+      case INSTRUMENT_SILVER:
+         multiplier = 2.5;
+         g_adjustedMaxSpreadPips = MathMax(MaxSpreadPips, 30.0);
+         break;
+         
+      case INSTRUMENT_INDEX:
+         multiplier = 5.0;  // Indices move much more
+         g_adjustedMaxSpreadPips = MathMax(MaxSpreadPips, 80.0);
+         break;
+         
+      case INSTRUMENT_CRYPTO:
+         multiplier = 10.0;  // Crypto is highly volatile
+         g_adjustedMaxSpreadPips = MathMax(MaxSpreadPips, 100.0);
+         break;
+         
+      case INSTRUMENT_FOREX:
+      case INSTRUMENT_OTHER:
+      default:
+         multiplier = 1.0;  // Keep user settings for forex
+         break;
+   }
+   
+   // Apply multiplier to pip-based parameters (only if not forex)
+   if(multiplier > 1.0)
+   {
+      g_adjustedMinStopLossPips = MinStopLossPips * multiplier;
+      g_adjustedMinZoneSizePips = TZ_MinZoneSizePips * multiplier;
+      g_adjustedMaxZoneSizePips = TZ_MaxZoneSizePips * multiplier;
+      g_adjustedBreakEvenPips = PM_BreakEvenPips * multiplier;
+      g_adjustedTrailingStartPips = PM_TrailingStartPips * multiplier;
+      g_adjustedTrailingDistPips = PM_TrailingDistPips * multiplier;
+      g_adjustedPartialClosePips = PM_PartialClosePips * multiplier;
+      g_adjustedTolerance = TZ_TolerancePips * multiplier;
+      g_adjustedMATolerance = TZ_MATolerancePips * multiplier;
+   }
+   
+   Print("=== Auto-Optimization Applied ===");
+   Print("Instrument Type: ", GetInstrumentTypeName(instrumentType));
+   Print("Parameter Multiplier: ", DoubleToString(multiplier, 1), "x");
+   Print("Adjusted MinStopLoss: ", DoubleToString(g_adjustedMinStopLossPips, 1), " pips");
+   Print("Adjusted MaxSpread: ", DoubleToString(g_adjustedMaxSpreadPips, 1), " pips");
+   Print("Adjusted ZoneSize: ", DoubleToString(g_adjustedMinZoneSizePips, 1), "-", 
+         DoubleToString(g_adjustedMaxZoneSizePips, 1), " pips");
+   Print("=================================");
+}
+
+//+------------------------------------------------------------------+
 //| Check if current spread is acceptable for trading                 |
 //+------------------------------------------------------------------+
 bool IsSpreadAcceptable()
@@ -277,9 +435,10 @@ bool IsSpreadAcceptable()
    double pipValue = GetPipValue();
    double spreadInPips = currentSpread / pipValue;
    
-   if(spreadInPips > MaxSpreadPips)
+   // Use auto-adjusted spread limit
+   if(spreadInPips > g_adjustedMaxSpreadPips)
    {
-      LogDebug("Spread too high: " + DoubleToString(spreadInPips, 1) + " pips > " + DoubleToString(MaxSpreadPips, 1) + " max");
+      LogDebug("Spread too high: " + DoubleToString(spreadInPips, 1) + " pips > " + DoubleToString(g_adjustedMaxSpreadPips, 1) + " max");
       return false;
    }
    return true;
@@ -528,6 +687,9 @@ int OnInit()
    g_lastProcessedDay = 0;
    g_lastOrderExecutionDay = 0;
    
+   // Auto-adjust parameters based on instrument type (MUST be called first)
+   AutoAdjustParameters();
+   
    // Calculate the symbol-specific magic number
    g_calculatedMagicNumber = CalculateMagicNumber();
    
@@ -659,8 +821,8 @@ int OnInit()
                        RectangleTransparency);
 
    // Calculate initial dynamic zone sizes if enabled
-   double initialMinZonePips = TZ_MinZoneSizePips;
-   double initialMaxZonePips = TZ_MaxZoneSizePips;
+   double initialMinZonePips = g_adjustedMinZoneSizePips;
+   double initialMaxZonePips = g_adjustedMaxZoneSizePips;
    double initialAtrPips = 0;
    
    if(UseDynamicZoneSizing)
@@ -670,30 +832,30 @@ int OnInit()
             " ATR(", DynamicATR_Period, ")=", initialAtrPips, " pips");
    }
 
-   // Initialize Trading Zones Logic
+   // Initialize Trading Zones Logic with auto-adjusted parameters
    g_tradingZonesLogic = new CTradingZonesLogic(g_fibonacci, g_keyLevels, g_movingAvgs, g_trendlines);
    g_tradingZonesLogic.Init(
-      TZ_TolerancePips,
-      TZ_MATolerancePips,
-      initialMinZonePips,           // Use dynamic value instead of TZ_MinZoneSizePips
-      initialMaxZonePips,           // Use dynamic value instead of TZ_MaxZoneSizePips
-      MinStopLossPips,
+      g_adjustedTolerance,           // Auto-adjusted tolerance
+      g_adjustedMATolerance,         // Auto-adjusted MA tolerance
+      initialMinZonePips,            // Auto-adjusted or dynamic min zone
+      initialMaxZonePips,            // Auto-adjusted or dynamic max zone
+      g_adjustedMinStopLossPips,     // Auto-adjusted min stop loss
       EnableTrading ? RiskPercent : 0.0,
       RewardRatio,
       g_calculatedMagicNumber,
       TZ_PendingOrderPips,
       UseTrendlinesForTrading,
 
-      // Add position management parameters
+      // Add position management parameters (auto-adjusted)
       PM_EnableBreakEven,
-      PM_BreakEvenPips,
+      g_adjustedBreakEvenPips,       // Auto-adjusted
       PM_BreakEvenOffset,
       PM_EnableTrailing,
-      PM_TrailingStartPips,
-      PM_TrailingDistPips,
+      g_adjustedTrailingStartPips,   // Auto-adjusted
+      g_adjustedTrailingDistPips,    // Auto-adjusted
       PM_EnablePartialClose,
       PM_PartialClosePercent,
-      PM_PartialClosePips
+      g_adjustedPartialClosePips     // Auto-adjusted
    );
    
    // Initialize drawdown protection
